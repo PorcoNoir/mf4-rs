@@ -87,6 +87,39 @@ impl MDF {
         Ok(None)
     }
 
+    /// Read several channels in one pass per channel group — see
+    /// [`ChannelGroup::signals_f64`](crate::api::channel_group::ChannelGroup::signals_f64).
+    ///
+    /// The result is index-aligned with `names` (`None` = channel not found
+    /// anywhere). Each name resolves to its **first** match walking groups in
+    /// file order, exactly like calling [`signal`](Self::signal) per name —
+    /// but a group's data blocks are read (and inflated) at most once no
+    /// matter how many of its channels are requested.
+    pub fn signals_f64(
+        &self,
+        names: &[&str],
+    ) -> Result<Vec<Option<crate::signal::SignalF64>>, MdfError> {
+        let mut out: Vec<Option<crate::signal::SignalF64>> =
+            names.iter().map(|_| None).collect();
+        let mut remaining: Vec<usize> = (0..names.len()).collect();
+        for group in self.channel_groups() {
+            if remaining.is_empty() {
+                break;
+            }
+            let want: Vec<&str> = remaining.iter().map(|&i| names[i]).collect();
+            let got = group.signals_f64(&want)?;
+            let mut still = Vec::new();
+            for (k, sig) in got.into_iter().enumerate() {
+                match sig {
+                    Some(s) => out[remaining[k]] = Some(s),
+                    None => still.push(remaining[k]),
+                }
+            }
+            remaining = still;
+        }
+        Ok(out)
+    }
+
     /// Get the start time of the measurement in nanoseconds since epoch.
     ///
     /// This is the absolute timestamp stored in the MDF file header.

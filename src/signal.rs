@@ -57,3 +57,25 @@ pub(crate) fn decoded_opt_to_f64(v: &Option<DecodedValue>) -> f64 {
         _ => f64::NAN,
     }
 }
+
+/// A channel decoded straight to `f64` by the one-pass bulk readers
+/// ([`ChannelGroup::signals_f64`], [`MDF::signals_f64`]).
+///
+/// Same axis semantics as [`Signal`]: `timestamps` holds the master values
+/// (empty when the group has no master, or the channel *is* the master);
+/// invalid or non-numeric samples decode to `NaN` — matching
+/// [`Signal::values_f64`].
+///
+/// [`ChannelGroup::signals_f64`]: crate::api::channel_group::ChannelGroup::signals_f64
+/// [`MDF::signals_f64`]: crate::api::mdf::MDF::signals_f64
+#[derive(Debug, Clone)]
+pub struct SignalF64 {
+    /// Channel name.
+    pub name: String,
+    /// Physical unit, if any.
+    pub unit: Option<String>,
+    /// Master-channel values. Empty if there is no separate master.
+    pub timestamps: Vec<f64>,
+    /// One physical value per record (`NaN` = invalid / non-numeric).
+    pub values: Vec<f64>,
+}
