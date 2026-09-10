@@ -67,12 +67,26 @@ impl RawDataGroup {
             let block_header = BlockHeader::from_bytes(header_bytes)?;
 
             match block_header.id.as_str() {
-                "##DT" | "##DV" => {
-                    // Single contiguous DataBlock
-                    let data_block = DataBlock::from_bytes(&mmap[byte_offset..])?;
+                "##DT" | "##DV" | "##DZ" => {
+                    // Single contiguous block — plain, or inflated from DZ.
+                    let data_block = parse_data_fragment(&mmap[byte_offset..])?;
                     collected_blocks.push(data_block);
                     // No list to follow, we’re done
                     current_block_address = 0;
+                }
+                "##HL" => {
+                    // Header list wrapping a compressed chain: a 24-byte
+                    // header, one link (the first DL), then zip flags the DZ
+                    // fragments repeat anyway. Follow the link.
+                    let link_bytes = mmap.get(byte_offset + 24..byte_offset + 32).ok_or(
+                        MdfError::TooShortBuffer {
+                            actual:   mmap.len(),
+                            expected: byte_offset.saturating_add(32),
+                            file:     file!(),
+                            line:     line!(),
+                        },
+                    )?;
+                    current_block_address = u64::from_le_bytes(link_bytes.try_into().unwrap());
                 }
                 "##DL" => {
                     // Fragmented list of data blocks
@@ -91,7 +105,7 @@ impl RawDataGroup {
                                 file:     file!(),
                                 line:     line!(),
                             })?;
-                        let fragment_block = DataBlock::from_bytes(fragment_bytes)?;
+                        let fragment_block = parse_data_fragment(fragment_bytes)?;
 
                         collected_blocks.push(fragment_block);
                     }
@@ -103,7 +117,7 @@ impl RawDataGroup {
                 unexpected_id => {
                     return Err(MdfError::BlockIDError {
                         actual: unexpected_id.to_string(),
-                        expected: "##DT / ##DV / ##DL".to_string(),
+                        expected: "##DT / ##DV / ##DL / ##DZ / ##HL".to_string(),
                     });
                 }
             }
@@ -111,4 +125,80 @@ impl RawDataGroup {
 
         Ok(collected_blocks)
     }
+}
+
+/// One data fragment: a plain `##DT`/`##DV` borrows the mmap; a compressed
+/// `##DZ` is inflated (deflate, plus the transposed variant measurement
+/// tools default to) into an owned block.
+fn parse_data_fragment(bytes: &[u8]) -> Result<DataBlock<'_>, MdfError> {
+    let header = BlockHeader::from_bytes(bytes)?;
+    if header.id != "##DZ" {
+        return DataBlock::from_bytes(bytes);
+    }
+
+    // DZBLOCK layout after the 24-byte header:
+    //   org_block_type: [u8; 2]   ("DT"/"DV"/"SD"/"RD")
+    //   zip_type:       u8        (0 = deflate, 1 = transposed deflate)
+    //   reserved:       u8
+    //   zip_parameter:  u32       (transposition column count)
+    //   org_data_length:u64
+    //   data_length:    u64
+    let need = 24 + 24;
+    if bytes.len() < need {
+        return Err(MdfError::TooShortBuffer {
+            actual:   bytes.len(),
+            expected: need,
+            file:     file!(),
+            line:     line!(),
+        });
+    }
+    let zip_type = bytes[26];
+    let zip_parameter = u32::from_le_bytes(bytes[28..32].try_into().unwrap()) as usize;
+    let org_len = u64::from_le_bytes(bytes[32..40].try_into().unwrap()) as usize;
+    let data_len = u64::from_le_bytes(bytes[40..48].try_into().unwrap()) as usize;
+    let payload = bytes.get(48..48 + data_len).ok_or(MdfError::TooShortBuffer {
+        actual:   bytes.len(),
+        expected: 48 + data_len,
+        file:     file!(),
+        line:     line!(),
+    })?;
+
+    let inflated = miniz_oxide::inflate::decompress_to_vec_zlib(payload)
+        .map_err(|e| MdfError::BlockSerializationError(format!("DZ inflate failed: {e:?}")))?;
+
+    let data = match zip_type {
+        0 => inflated,
+        1 => untranspose(&inflated, zip_parameter, org_len),
+        other => {
+            return Err(MdfError::BlockSerializationError(format!(
+                "DZ zip_type {other} is not supported"
+            )));
+        }
+    };
+    if data.len() != org_len {
+        return Err(MdfError::BlockSerializationError(format!(
+            "DZ inflated to {} bytes, expected {org_len}",
+            data.len()
+        )));
+    }
+    Ok(DataBlock::from_owned(header, data))
+}
+
+/// Undo transposed deflate: the compressor reshaped the original bytes into
+/// `cols` columns and stored the transpose (better ratios on record data);
+/// any tail shorter than a full row is appended untransposed.
+fn untranspose(transposed: &[u8], cols: usize, org_len: usize) -> Vec<u8> {
+    if cols == 0 || transposed.len() < cols {
+        return transposed.to_vec();
+    }
+    let lines = org_len / cols;
+    let body = lines * cols;
+    let mut out = Vec::with_capacity(transposed.len());
+    for i in 0..lines {
+        for j in 0..cols {
+            out.push(transposed[j * lines + i]);
+        }
+    }
+    out.extend_from_slice(&transposed[body.min(transposed.len())..]);
+    out
 }

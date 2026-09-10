@@ -20,6 +20,7 @@ required-features = ["pyo3"]
 nom = "8"  # Used for parsing binary MDF data
 byteorder = "1.5"  # Helps with reading binary data
 memmap2 = "0.9.9"
+miniz_oxide = "0.8"  # DZ (compressed data block) inflation
 meval = "0.2"  # Used for evaluating mathematical expressions
 thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"] }

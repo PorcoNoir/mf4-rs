@@ -401,7 +401,7 @@ pub fn cut_mdf_by_time(
                 slot_off: usize,
                 slot_size: usize,
                 next_offset: u64,
-                iter: Box<dyn Iterator<Item = Result<&'a [u8], MdfError>> + 'a>,
+                iter: Box<dyn Iterator<Item = Result<std::borrow::Cow<'a, [u8]>, MdfError>> + 'a>,
             }
             let mut vlsd_states: Vec<VlsdState> = Vec::new();
             for (cn_id, src_idx, is_vlsd) in &out_channels {

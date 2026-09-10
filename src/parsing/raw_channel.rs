@@ -1,6 +1,7 @@
 use crate::blocks::channel_block::ChannelBlock;
 use crate::blocks::data_list_block::DataListBlock;
 use crate::blocks::signal_data_block::SignalDataBlock;
+use std::borrow::Cow;
 use crate::blocks::common::BlockParse;
 use crate::parsing::raw_channel_group::RawChannelGroup;
 use crate::parsing::raw_data_group::RawDataGroup;
@@ -32,7 +33,7 @@ impl<'a> RawChannel {
         data_group: &'a RawDataGroup,
         channel_group: &'a RawChannelGroup,
         mmap: &'a [u8],
-    ) -> Result<Box<dyn Iterator<Item = Result<&'a [u8], MdfError>> + 'a>, MdfError> {
+    ) -> Result<Box<dyn Iterator<Item = Result<Cow<'a, [u8]>, MdfError>> + 'a>, MdfError> {
         // 1) VLSD path: channel has its own data pointer => SD/DL chain
         if self.block.channel_type == 1 && self.block.data != 0 {
             // Capture the file bytes and channel pointer
@@ -45,7 +46,7 @@ impl<'a> RawChannel {
             let mut visited_dl: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
             // Build a from_fn iterator carrying that mutable state
-            let vlsd_iter = std::iter::from_fn(move || -> Option<Result<&'a [u8], MdfError>> {
+            let vlsd_iter = std::iter::from_fn(move || -> Option<Result<Cow<'a, [u8]>, MdfError>> {
                 loop {
                     // 1) Yield from an open SDBLOCK if any
                     if let Some(sdb) = &current_sdb {
@@ -66,7 +67,7 @@ impl<'a> RawChannel {
                             }
                             let slice = &buf[start..end];
                             sdb_pos = end;
-                            return Some(Ok(slice));
+                            return Some(Ok(Cow::Borrowed(slice)));
                         }
                         // exhausted
                         current_sdb = None;
@@ -186,14 +187,25 @@ impl<'a> RawChannel {
         //  - trims any partial record at the end of each block
         //  - yields & [u8] of length `record_size`
         let iter = blocks.into_iter().flat_map(move |data_block| {
-            // For DZBLOCK you already unzipped into DataBlock, so here data_block.data
-            let raw = data_block.data;
-            let valid_len = (raw.len() / record_size) * record_size;
-            // `chunks_exact` returns an iterator of &[u8] each exactly record_size
-            raw[..valid_len].chunks_exact(record_size)
-                // wrap each slice in Ok(...) so the overall Iterator<Item=Result<_,_>>
-                .map(Ok)
-                // If you wanted to handle an unexpected remainder, you could check raw.len() % record_size != 0 here.
+            // Plain blocks yield zero-copy borrows from the mmap; DZ-inflated
+            // blocks own their bytes, so their records are copied out.
+            let recs: Vec<Result<Cow<'a, [u8]>, MdfError>> = match data_block.data {
+                Cow::Borrowed(raw) => {
+                    let valid_len = (raw.len() / record_size) * record_size;
+                    raw[..valid_len]
+                        .chunks_exact(record_size)
+                        .map(|c| Ok(Cow::Borrowed(c)))
+                        .collect()
+                }
+                Cow::Owned(vec) => {
+                    let valid_len = (vec.len() / record_size) * record_size;
+                    vec[..valid_len]
+                        .chunks_exact(record_size)
+                        .map(|c| Ok(Cow::Owned(c.to_vec())))
+                        .collect()
+                }
+            };
+            recs.into_iter()
         });
 
         Ok(Box::new(iter))

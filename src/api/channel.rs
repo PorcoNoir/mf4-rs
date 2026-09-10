@@ -116,7 +116,7 @@ impl<'a> Channel<'a> {
         if invalidation_bytes_nr == 0 && !all_invalid {
             // Fast path: no invalidation bytes and no all-invalid flag
             for data_block in &blocks {
-                let raw = data_block.data;
+                let raw = data_block.data.as_ref();
                 let valid_len = (raw.len() / record_size) * record_size;
                 let mut offset = 0;
                 while offset + record_size <= valid_len {
@@ -133,7 +133,7 @@ impl<'a> Channel<'a> {
         } else {
             // Slow path: must check invalidation flags/bits per record
             for data_block in &blocks {
-                let raw = data_block.data;
+                let raw = data_block.data.as_ref();
                 let valid_len = (raw.len() / record_size) * record_size;
                 let mut offset = 0;
                 while offset + record_size <= valid_len {
@@ -215,7 +215,7 @@ impl<'a> Channel<'a> {
                 if all_invalid {
                     out.push(f64::NAN);
                 } else {
-                    convert_record(rec, &mut out)?;
+                    convert_record(rec.as_ref(), &mut out)?;
                 }
             }
             return Ok(out);
@@ -232,7 +232,7 @@ impl<'a> Channel<'a> {
 
         let blocks = self.raw_data_group.data_blocks(self.mmap)?;
         for data_block in &blocks {
-            let raw = data_block.data;
+            let raw = data_block.data.as_ref();
             let valid_len = (raw.len() / record_size) * record_size;
             let mut offset = 0;
             while offset + record_size <= valid_len {

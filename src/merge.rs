@@ -196,9 +196,9 @@ fn collect_groups(file: &MdfFile, src_file: usize) -> Result<Vec<MergedGroup>, M
                 while let Some(rec) = iter.next() {
                     let bytes = rec?;
                     let val = if is_vlsd {
-                        vlsd_payload_to_value(bytes, &ch.block.data_type)
+                        vlsd_payload_to_value(bytes.as_ref(), &ch.block.data_type)
                     } else {
-                        decode_channel_value(bytes, record_id_len as usize, &ch.block)
+                        decode_channel_value(bytes.as_ref(), record_id_len as usize, &ch.block)
                             .unwrap_or(DecodedValue::Unknown)
                     };
                     data[idx].push(val);

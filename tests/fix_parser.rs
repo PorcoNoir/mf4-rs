@@ -169,7 +169,7 @@ fn dv_block_parses_as_data_block() {
     let mut bytes = block_header(b"##DV", 32, 0);
     bytes.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
     let dv = DataBlock::from_bytes(&bytes).expect("##DV must parse");
-    assert_eq!(dv.data, &[1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(dv.data.as_ref(), &[1, 2, 3, 4, 5, 6, 7, 8]);
 
     // ##DT still parses, anything else is still rejected.
     let mut dt = block_header(b"##DT", 32, 0);
